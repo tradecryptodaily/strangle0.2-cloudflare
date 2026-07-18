@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BTC Strangle Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>⚡</text></svg>" />
+<style>
+  :root {
+    --bg0:#07090f; --bg1:#0b0f19; --card:rgba(255,255,255,.028);
+    --card-hover:rgba(255,255,255,.045); --border:rgba(255,255,255,.09);
+    --border-soft:rgba(255,255,255,.055);
+    --fg:#e8ecf4; --dim:#8a93a6; --dimmer:#5c6472;
+    --y:#f0b429; --g:#34d399; --r:#f87171; --c:#60a5fa; --m:#c084fc; --b:#7dd3fc;
+    --accent:linear-gradient(135deg,#f0b429 0%,#f97316 100%);
+  }
+  * { box-sizing:border-box; }
+  html { scrollbar-color:#2a3242 transparent; }
+  body {
+    margin:0; padding:0 20px 28px; color:var(--fg);
+    background:
+      radial-gradient(1200px 500px at 75% -10%, rgba(96,165,250,.07), transparent 60%),
+      radial-gradient(900px 420px at 10% -5%, rgba(240,180,41,.05), transparent 55%),
+      linear-gradient(180deg, var(--bg1), var(--bg0) 400px);
+    min-height:100vh;
+    font-family:"Inter", -apple-system, sans-serif; font-size:13.5px; line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  .mono, table, .line, #spot, #clock, .alert { font-family:"JetBrains Mono", ui-monospace, monospace; font-variant-numeric:tabular-nums; }
+
+  /* ── Header ─────────────────────────────────────────── */
+  header {
+    position:sticky; top:0; z-index:10; display:flex; flex-wrap:wrap; gap:10px 22px;
+    align-items:center; padding:14px 4px 12px; margin:0 -20px 18px; padding-inline:24px;
+    background:rgba(9,12,19,.82); backdrop-filter:blur(14px);
+    border-bottom:1px solid var(--border-soft);
+  }
+  .logo { display:flex; align-items:center; gap:10px; }
+  .logo .mark {
+    width:30px; height:30px; border-radius:9px; background:var(--accent);
+    display:grid; place-items:center; box-shadow:0 4px 18px rgba(240,180,41,.35);
+  }
+  .logo .mark svg { width:16px; height:16px; }
+  h1 { font-size:15px; font-weight:800; letter-spacing:.4px; margin:0; }
+  h1 span { background:var(--accent); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  .stat { display:flex; flex-direction:column; line-height:1.25; }
+  .stat .k { font-size:10px; text-transform:uppercase; letter-spacing:1.2px; color:var(--dimmer); font-weight:600; }
+  .stat .v { font-size:14px; font-weight:600; }
+  #spot { color:var(--y); font-size:16px; font-weight:700; transition:color .4s ease; }
+  #spot.tick-up { animation:tickUp .6s ease; }
+  #spot.tick-down { animation:tickDown .6s ease; }
+  @keyframes tickUp { 0% { color:var(--g); text-shadow:0 0 14px rgba(52,211,153,.7); } 100% { color:var(--y); text-shadow:none; } }
+  @keyframes tickDown { 0% { color:var(--r); text-shadow:0 0 14px rgba(248,113,113,.7); } 100% { color:var(--y); text-shadow:none; } }
+  #spotsrc { color:var(--dimmer); font-size:10px; font-weight:500; }
+  .spacer { flex:1; }
+  button {
+    display:inline-flex; align-items:center; gap:7px;
+    background:var(--card); color:var(--fg); border:1px solid var(--border);
+    border-radius:10px; padding:7px 14px; cursor:pointer;
+    font:600 12.5px "Inter", sans-serif; transition:all .15s ease;
+  }
+  button:hover { background:var(--card-hover); border-color:rgba(96,165,250,.5); transform:translateY(-1px); }
+  button svg { width:14px; height:14px; }
+  .ok { color:var(--g); font-weight:700; } .bad { color:var(--r); font-weight:700; }
+  #status.ok::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%;
+    background:var(--g); margin-right:7px; vertical-align:1px;
+    box-shadow:0 0 0 0 rgba(52,211,153,.5); animation:pulse 2s infinite; }
+  @keyframes pulse { 70% { box-shadow:0 0 0 7px rgba(52,211,153,0);} 100% { box-shadow:0 0 0 0 rgba(52,211,153,0);} }
+
+  /* ── Cards / grid ───────────────────────────────────── */
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(440px, 1fr)); gap:14px; }
+  .card {
+    background:var(--card); border:1px solid var(--border-soft); border-radius:14px;
+    padding:16px 18px; margin-bottom:14px;
+    box-shadow:0 10px 30px rgba(0,0,0,.25);
+    transition:border-color .2s ease;
+  }
+  .card:hover { border-color:var(--border); }
+  .cardhead {
+    color:var(--c); font-family:"Inter"; font-weight:700; font-size:13px;
+    letter-spacing:.3px; margin-bottom:10px; display:flex; align-items:center; gap:8px;
+  }
+  .cardhead::before { content:""; width:8px; height:8px; border-radius:3px; background:var(--c); opacity:.9; }
+
+  table { border-collapse:collapse; width:100%; margin-bottom:10px; font-size:12.5px; }
+  th { color:var(--dimmer); text-align:right; font-weight:500; font-size:10.5px;
+       text-transform:uppercase; letter-spacing:.8px;
+       border-bottom:1px solid var(--border-soft); padding:4px 7px; }
+  td { text-align:right; padding:5px 7px; border-bottom:1px solid rgba(255,255,255,.025); }
+  tr:last-child td { border-bottom:none; }
+  tr:hover td { background:rgba(255,255,255,.02); }
+  th:first-child, td:first-child { text-align:left; }
+
+  .line { margin:4px 0; font-size:12.5px; }
+  .dim{color:var(--dim)} .y{color:var(--y)} .g{color:var(--g)} .r{color:var(--r)} .c{color:var(--c)} .m{color:var(--m)} .b{color:var(--b)}
+
+  h2 { font-family:"Inter"; font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:1.6px;
+       color:var(--dim); display:flex; align-items:center; gap:9px;
+       border-bottom:1px solid var(--border-soft); padding-bottom:8px; margin:26px 0 14px; }
+  h2 svg { width:14px; height:14px; opacity:.7; }
+
+  #term { background:var(--card); border:1px solid var(--border-soft); border-radius:14px;
+          padding:14px 18px; margin-bottom:14px; box-shadow:0 10px 30px rgba(0,0,0,.25); }
+  #term:empty { display:none; }
+  #term b { font-family:"Inter"; letter-spacing:1px; font-size:11.5px; color:var(--dim); }
+
+  .alert { border-left:3px solid var(--y); padding:9px 14px; margin:8px 0;
+           background:var(--card); border-radius:0 10px 10px 0; font-size:12.5px; }
+  .alert.red { border-left-color:var(--r); background:rgba(248,113,113,.06); }
+  .alert.green { border-left-color:var(--g); background:rgba(52,211,153,.06); }
+
+  footer { color:var(--dimmer); font-size:11px; margin-top:26px;
+           border-top:1px solid var(--border-soft); padding-top:12px; letter-spacing:.2px; }
+
+  /* ── Position cards (desk style) ────────────────────── */
+  .pos-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .pos-id { font:700 14px "Inter"; letter-spacing:.3px; }
+  .badge { padding:3px 11px; border-radius:20px; font:600 10.5px "Inter"; letter-spacing:.5px; }
+  .badge.strangle { background:rgba(96,165,250,.12); color:var(--c); border:1px solid rgba(96,165,250,.3); }
+  .badge.naked { background:rgba(52,211,153,.12); color:var(--g); border:1px solid rgba(52,211,153,.3); }
+  .pill { margin-left:auto; padding:3px 11px; border-radius:8px; font:700 10.5px "JetBrains Mono";
+          background:rgba(255,255,255,.05); border:1px solid var(--border-soft); color:var(--dim); }
+  .pos-sub { color:var(--dim); font-size:12px; margin:3px 0 14px; }
+  .sect { font:600 10px "Inter"; letter-spacing:1.5px; color:var(--dimmer);
+          text-transform:uppercase; margin:16px 0 7px; }
+  .pnl-row { display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap; }
+  .pnl-hero { font:700 34px/1.1 "JetBrains Mono"; letter-spacing:-.5px; }
+  .pnl-side { text-align:right; font-size:12px; }
+  .pnl-side .big { font:700 14px "JetBrains Mono"; }
+  .legs { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-top:6px; }
+  .legbox { background:rgba(255,255,255,.02); border:1px solid var(--border-soft);
+            border-radius:12px; padding:12px 14px; }
+  .legbox .strike { font:700 15px "JetBrains Mono"; margin:3px 0 9px; }
+  .legbox .kv { display:flex; justify-content:space-between; font-size:12px; padding:2.5px 0; }
+  .legbox .kv span:first-child { color:var(--dim); }
+  .legpnl { margin-top:9px; font:700 13.5px "JetBrains Mono"; }
+  .brow { display:flex; align-items:center; gap:12px; font-size:12px; margin:5px 0; }
+  .brow .lab { width:150px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .bar { flex:1; height:5px; background:rgba(255,255,255,.07); border-radius:3px; overflow:hidden; }
+  .bar i { display:block; height:100%; border-radius:3px; transition:width .5s ease; }
+  .brow .val { min-width:84px; text-align:right; font-weight:600; }
+  .statusline { margin-top:14px; font-size:12.5px; display:flex; gap:9px; align-items:center; flex-wrap:wrap; }
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; flex:none; }
+
+  /* ── Responsive ──────────────────────────────────────── */
+  @media (max-width: 720px) {
+    body { padding:0 12px 24px; font-size:13px; }
+    header {
+      margin:0 -12px 14px; padding:12px 14px 10px; gap:8px 14px;
+      flex-wrap:wrap;
+    }
+    .logo { order:1; }
+    .logo .mark { width:26px; height:26px; }
+    h1 { font-size:13px; }
+    #notifbtn { order:2; margin-left:auto; padding:7px 10px; font-size:0; }
+    #notifbtn svg { width:16px; height:16px; }
+    .stat { order:3; }
+    .spacer { display:none; }
+    #status { font-size:11px; }
+
+    .grid { grid-template-columns:1fr; gap:10px; }
+    .card { padding:13px 14px; border-radius:12px; }
+    .cardhead { font-size:12px; }
+
+    table { font-size:11px; }
+    th, td { padding:4px 4px; }
+    th { font-size:9px; letter-spacing:.4px; }
+    /* Hide Bid/Ask on very small screens — least critical columns */
+    th:nth-child(5), td:nth-child(5), th:nth-child(6), td:nth-child(6) { display:none; }
+
+    .line { font-size:11.5px; }
+    h2 { font-size:10.5px; margin:20px 0 10px; }
+
+    /* Position cards */
+    .pos-head { gap:7px; }
+    .pos-id { font-size:13px; }
+    .pnl-row { flex-direction:column; align-items:flex-start; gap:6px; }
+    .pnl-hero { font-size:28px; }
+    .pnl-side { text-align:left; }
+    .legs { grid-template-columns:1fr 1fr; gap:8px; }
+    .legbox { padding:10px 11px; }
+    .legbox .strike { font-size:13px; }
+    .legbox .kv { font-size:11px; }
+    .brow { gap:8px; }
+    .brow .lab { width:104px; font-size:10.5px; }
+    .brow .val { min-width:64px; font-size:11px; }
+    .statusline { font-size:11.5px; }
+    .statusline span[style*="margin-left:auto"] { margin-left:0 !important; width:100%; }
+
+    #term { padding:12px 14px; }
+    #term b { font-size:10px; }
+    .alert { padding:8px 12px; font-size:11.5px; }
+    footer { font-size:10px; line-height:1.6; }
+  }
+
+  @media (max-width: 420px) {
+    .legs { grid-template-columns:1fr; }
+    .pnl-hero { font-size:24px; }
+    .brow .lab { width:88px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <div class="mark">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M13 2 4.5 13.5h6L11 22l8.5-11.5h-6L13 2z" fill="#0b0f19"/></svg>
+    </div>
+    <h1>BTC <span>STRANGLE</span> MONITOR</h1>
+  </div>
+  <div class="stat"><span class="k">BTC Spot</span><span class="v"><span id="spot">—</span> <span id="spotsrc"></span></span></div>
+  <div class="stat"><span class="k">Updated</span><span class="v" id="clock" style="color:var(--dim)">—</span></div>
+  <div class="stat"><span class="k">Feed</span><span class="v"><span id="status" class="dim">connecting…</span></span></div>
+  <div class="spacer"></div>
+  <button id="notifbtn">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+    Enable alerts
+  </button>
+</header>
+
+<div id="expiries" class="grid"></div>
+<div id="term"></div>
+
+<h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 3v18h18"/><path d="m7 15 4-6 4 3 5-8"/></svg>
+  Your Positions <span id="posmsg" class="dim" style="text-transform:none; letter-spacing:0;"></span></h2>
+<div id="positions" class="grid"></div>
+
+<h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+  Active Alerts</h2>
+<div id="alerts"></div>
+
+<footer>
+  BTC spot streams live via direct WebSocket · option chain refreshes every 15s · positions 30s · vol data hourly · IV Rank · Expected Move · skew · term structure · IV/RV · max pain · gamma-vega triggers — parity with live_monitor.py v0.2
+</footer>
+<script src="positions.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
