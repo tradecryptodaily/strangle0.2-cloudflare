@@ -138,6 +138,7 @@ const state = {
   fired: new Set(),     // notification de-dupe (re-arms on clear)
   token: localStorage.getItem("dash_token") || "",
   spotWs: 0, spotWsTs: 0,   // live tick from the direct browser WebSocket
+  chainFails: 0, lastChainOk: 0,   // transient-error tracking for the status banner
 };
 const WS_SPOT_MAX_AGE_MS = 8000;   // treat the WS price as "live" for this long since last tick
 const oiPeaks = JSON.parse(localStorage.getItem("oi_peaks") || "{}");
@@ -302,12 +303,23 @@ async function pollChain() {
     const extra = positionExpiries().join(",");
     const d = await j("/api/chain" + (extra ? `?expiries=${encodeURIComponent(extra)}` : ""));
     state.chain = d.chain; state.spot = d.spot; state.expiries = d.expiries; state.meta = d.meta;
+    state.chainFails = 0; state.lastChainOk = Date.now();
     document.getElementById("status").textContent = "LIVE";
     document.getElementById("status").className = "ok";
     render();
   } catch (e) {
-    document.getElementById("status").textContent = "ERR: " + e.message;
-    document.getElementById("status").className = "bad";
+    state.chainFails++;
+    // A single failed poll doesn't mean the feed is down — Delta's edge
+    // rate-limiting is intermittent (some requests through Cloudflare 403,
+    // others don't) and _delta.js already retries 3x per call. Only surface
+    // this as an error once it's failed several polls in a row; otherwise
+    // keep showing the last good data as LIVE (it's at most ~15-30s stale).
+    if (state.chainFails >= 3) {
+      const ageS = state.lastChainOk ? Math.round((Date.now() - state.lastChainOk) / 1000) : null;
+      document.getElementById("status").textContent =
+        "ERR: " + e.message + (ageS ? ` (stale ${ageS}s)` : "");
+      document.getElementById("status").className = "bad";
+    }
   }
 }
 function pollPositions() {

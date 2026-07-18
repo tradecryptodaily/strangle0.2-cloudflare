@@ -43,9 +43,19 @@ async function deltaGet(path, params, auth, env) {
     headers["signature"] = await hmacSha256Hex((env && env.DELTA_API_SECRET) || "", msg);
     headers["timestamp"] = ts;
   }
-  const r = await fetch(BASE + path + qs, { headers });
-  if (!r.ok) throw new Error(`${path} -> HTTP ${r.status}`);
-  return r.json();
+  // Delta's bot-protection appears to score/rate-limit intermittently rather
+  // than hard-block Cloudflare's IP range outright (confirmed: some polls
+  // succeed with real data, some 403). A short retry rides out that kind of
+  // transient block without doing anything sneaky — same request, same data.
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((res) => setTimeout(res, 250 * attempt));
+    const r = await fetch(BASE + path + qs, { headers });
+    if (r.ok) return r.json();
+    lastErr = new Error(`${path} -> HTTP ${r.status}`);
+    if (r.status !== 403 && r.status !== 429) break; // don't retry real errors
+  }
+  throw lastErr;
 }
 
 // Monthly expiry = last Friday of the month (Delta convention), code DDMMYY.
