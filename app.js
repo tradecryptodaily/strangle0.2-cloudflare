@@ -393,25 +393,26 @@ async function pollVol() {
   render();
 }
 
-// ── Live BTC spot — direct browser WebSocket to Delta (millisecond ticks) ────
-// Bypasses the 15s /api/chain poll entirely for the header price: the
-// browser connects straight to Delta's public ticker socket (the same feed
-// the terminal script streams from), so BTC ticks in as fast as Delta
-// pushes them — no serverless round-trip per update. The option chain,
-// positions, and analytics still refresh on their existing poll loops;
-// only the header number and P&L math get this instant feed. The full
-// render() is throttled to ~400ms (see renderLoop below) so a chatty tick
-// stream doesn't thrash the DOM — the number itself still updates on
-// every single tick via a direct, cheap textContent write.
-const WS_URL = "wss://socket.india.delta.exchange";
-const SPOT_SYMS = [".DEXBTUSDT", "BTCUSDT", ".DEBTCUSDT", "BTCUSD", "BTC_USDT", "BTCUSDT_PERP"];
+// ── Live BTC spot — direct browser WebSocket to Binance (millisecond ticks) ──
+// Bypasses the 15s /api/chain poll entirely for the header price AND for
+// every downstream calculation (breakevens, max pain, P&L, delta/gamma
+// triggers all read this via effectiveSpot()). Binance's BTCUSDT feed is
+// the deepest, fastest BTC book on the internet — ticks arrive far faster
+// than Delta's own socket. Trade-off, explicitly chosen: Delta India's
+// options settle against Delta's own index, which can drift a few dollars
+// from Binance spot during fast moves — this feed is the fastest available,
+// not necessarily the exact settlement price. If Binance goes stale/down,
+// effectiveSpot() falls back to the server-polled Delta chain price, so
+// analytics never depend on Binance alone.
+// The full render() is driven by requestAnimationFrame + a dirty flag (see
+// renderLoop below) instead of a fixed interval, so a full recompute of
+// P&L/alerts/tables fires within ~1 frame of a tick rather than waiting on
+// a timer — the header number itself still updates via a direct, cheap
+// textContent write on every single tick, independent of that loop.
+const WS_URL = "wss://stream.binance.com:9443/stream?streams=btcusdt@aggTrade/btcusdt@bookTicker";
 let spotSocket = null, wsBackoffMs = 1000, wsReconnectTimer = null;
 let renderDirty = false, lastTickSpot = 0;
 
-function isSpotSymbol(sym) {
-  return !sym.includes("-") &&
-    (SPOT_SYMS.includes(sym) || (sym.startsWith("BTC")) || sym.startsWith(".DE"));
-}
 function flashSpot(up) {
   const el = document.getElementById("spot");
   if (!el) return;
@@ -430,18 +431,15 @@ function connectSpotWS() {
     scheduleReconnect();
     return;
   }
-  spotSocket.onopen = () => {
-    wsBackoffMs = 1000;
-    spotSocket.send(JSON.stringify({
-      type: "subscribe",
-      payload: { channels: [{ name: "v2/ticker", symbols: SPOT_SYMS }] },
-    }));
-  };
+  spotSocket.onopen = () => { wsBackoffMs = 1000; };   // combined stream, no subscribe message needed
   spotSocket.onmessage = (ev) => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch (_) { return; }
-    if (msg.type !== "v2/ticker" || !isSpotSymbol(msg.symbol || "")) return;
-    const price = +(msg.mark_price || msg.close || msg.spot_price || msg.price || 0);
+    const stream = msg.stream || "", d = msg.data || {};
+    let price = 0;
+    if (stream.endsWith("@aggTrade")) price = +(d.p || 0);          // last trade price
+    else if (stream.endsWith("@bookTicker")) price = (+(d.b || 0) + +(d.a || 0)) / 2 || 0; // bid/ask mid
+    else return;
     if (price <= 10000) return;   // sanity check, same guard as the terminal script
     state.spotWs = price;
     state.spotWsTs = Date.now();
@@ -452,8 +450,8 @@ function connectSpotWS() {
       if (lastTickSpot) flashSpot(price >= lastTickSpot);
       lastTickSpot = price;
     }
-    setSpotSrc("⚡ live", "g");
-    renderDirty = true;   // let the throttled loop recompute P&L/alerts/tables
+    setSpotSrc("⚡ live (Binance)", "g");
+    renderDirty = true;   // let the rAF loop recompute P&L/alerts/tables
   };
   spotSocket.onclose = () => { setSpotSrc("reconnecting…", "y"); scheduleReconnect(); };
   spotSocket.onerror = () => { try { spotSocket.close(); } catch (_) {} };
@@ -696,6 +694,13 @@ setInterval(pollPositions, POS_POLL_MS);
 setInterval(pollVol, VOL_POLL_MS);
 
 connectSpotWS();
-// Throttled recompute: the spot number itself updates every tick (above),
-// but P&L/alerts/tables only need to be a few times a second, not per-tick.
-setInterval(() => { if (renderDirty) { renderDirty = false; render(); } }, 400);
+// Recompute loop: the spot number itself updates every tick (above, direct
+// textContent write), but the full P&L/alerts/tables render is pinned to
+// requestAnimationFrame instead of a fixed timer — it only does work when
+// renderDirty is set, so idle frames cost one boolean check, and a dirty
+// frame repaints within ~16ms of the tick instead of waiting up to 400ms.
+function renderLoop() {
+  if (renderDirty) { renderDirty = false; render(); }
+  requestAnimationFrame(renderLoop);
+}
+requestAnimationFrame(renderLoop);
