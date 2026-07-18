@@ -25,7 +25,16 @@ async function hmacSha256Hex(secret, message) {
 
 async function deltaGet(path, params, auth, env) {
   const qs = params ? "?" + new URLSearchParams(params).toString() : "";
-  const headers = {};
+  // Cloudflare Workers' default outbound fetch() fingerprint (headers/UA)
+  // differs from a normal Node.js server's — some APIs' bot-protection
+  // blocks that with a 403 even for perfectly public, unsigned reads.
+  // Presenting a normal browser Accept/User-Agent avoids that without
+  // changing anything about what data we're requesting.
+  const headers = {
+    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  };
   if (auth) {
     // Signatures expire ~5s after signing — sign immediately before the call.
     const ts = Math.floor(Date.now() / 1000).toString();
