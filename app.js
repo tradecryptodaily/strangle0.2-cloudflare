@@ -139,16 +139,34 @@ const state = {
   token: localStorage.getItem("dash_token") || "",
   spotWs: 0, spotWsTs: 0,   // live tick from the direct browser WebSocket
   chainFails: 0, lastChainOk: 0,   // transient-error tracking for the status banner
+  reference: null, tradeTargets: [],   // nearest-monthly reference expiry vs. actual 45/80 DTE targets
+  recentAlerts: JSON.parse(localStorage.getItem("recent_alerts") || "[]"),   // persists past the condition clearing
 };
 const WS_SPOT_MAX_AGE_MS = 8000;   // treat the WS price as "live" for this long since last tick
 const oiPeaks = JSON.parse(localStorage.getItem("oi_peaks") || "{}");
 const ivBase = JSON.parse(localStorage.getItem("iv_baseline") || "{}");
 
 // ── Alert engine ─────────────────────────────────────────────────────────────
+// state.alerts tracks only what's CURRENTLY breaching (cleared the instant a
+// condition resolves — matches live_monitor.py's active_alerts). That's
+// correct for "what needs attention right now", but it means anything that
+// fired and cleared between two page views vanishes without a trace. The
+// terminal doesn't have that problem — it appends every fire to
+// alert_history.json permanently. recentAlerts mirrors that here: a
+// capped, localStorage-backed log written once per firing episode (not
+// every poll while it's active), so a transient alert stays visible even
+// after it clears or the page reloads.
+const RECENT_ALERTS_MAX = 30;
+function logRecentAlert(entry) {
+  state.recentAlerts.unshift(entry);
+  if (state.recentAlerts.length > RECENT_ALERTS_MAX) state.recentAlerts.length = RECENT_ALERTS_MAX;
+  localStorage.setItem("recent_alerts", JSON.stringify(state.recentAlerts));
+}
 function fire(key, title, msg, sev) {
   state.alerts[key] = { title, msg, sev, ts: new Date().toLocaleTimeString() };
   if (!state.fired.has(key)) {
     state.fired.add(key);
+    logRecentAlert({ key, title, msg, sev, ts: Date.now() });
     if ("Notification" in window && Notification.permission === "granted")
       new Notification(title, { body: msg });
   }
@@ -303,6 +321,7 @@ async function pollChain() {
     const extra = positionExpiries().join(",");
     const d = await j("/api/chain" + (extra ? `?expiries=${encodeURIComponent(extra)}` : ""));
     state.chain = d.chain; state.spot = d.spot; state.expiries = d.expiries; state.meta = d.meta;
+    state.reference = d.reference || null; state.tradeTargets = d.trade_targets || [];
     state.chainFails = 0; state.lastChainOk = Date.now();
     document.getElementById("status").textContent = "LIVE";
     document.getElementById("status").className = "ok";
@@ -521,12 +540,13 @@ function render() {
   for (const exp of state.expiries || []) {
     const ch = state.chain[exp]; const meta = state.meta[exp];
     const dte = meta.dte;
+    const isRef = exp === state.reference;
     const [ck, cdd] = findTarget(ch.calls, 0.20);
     const [pk, pdd] = findTarget(ch.puts, 0.20);
     const aiv = atmIV(exp, ch, S, dte);
-    if (aiv > 0) tsIVs.push([exp, aiv, meta]);
+    if (aiv > 0) tsIVs.push([exp, aiv, meta, isRef]);
     if (!cdd || !pdd || !(cdd.mark > 0) || !(pdd.mark > 0)) {
-      html += card(meta, dte, `<div class="dim">Waiting for data…</div>`); continue;
+      html += card(meta, dte, `<div class="dim">Waiting for data…</div>`, isRef); continue;
     }
     const T = Math.max(1, dte) / 365;
     const cIV = (cdd.iv > 0 ? cdd.iv : ivFromMark(S, ck, T, cdd.mark, "call")) * 100;
@@ -580,22 +600,27 @@ function render() {
       if (w.p) body += barRow(`Put wall P-${fmt(+w.p[0])}`, w.p[1].oi / w.mx, "var(--g)",
         compact(w.p[1].oi), mine.p.has(+w.p[0]) ? ` <span class="c">← your short</span>` : "");
     }
-    html += card(meta, dte, body);
+    html += card(meta, dte, body, isRef);
   }
   document.getElementById("expiries").innerHTML = html;
 
-  // Term structure
+  // Term structure — "ivs" (tsIVs) includes every displayed expiry, incl. the
+  // reference month, but the shape/recommendation is deliberately computed
+  // from your two actual trade-target expiries only, so a reference-month
+  // reading never skews which of YOUR expiries the tool prefers.
   let tsHtml = "";
-  if (tsIVs.length >= 2) {
-    const spread = (tsIVs[1][1] - tsIVs[0][1]) * 100;
+  const tradeIVs = tsIVs.filter(([, , , isRef]) => !isRef);
+  if (tradeIVs.length >= 2) {
+    const spread = (tradeIVs[1][1] - tradeIVs[0][1]) * 100;
     const shape = spread <= -TS_FLAT_PTS ? "BACKWARDATION" : spread >= TS_FLAT_PTS ? "CONTANGO" : "FLAT";
     const cls = shape === "BACKWARDATION" ? "g" : shape === "CONTANGO" ? "y" : "";
     const rec = shape === "BACKWARDATION"
-      ? `Prefer ${tsIVs[0][2].label} — front IV richer: faster theta, better roll yield`
+      ? `Prefer ${tradeIVs[0][2].label} — front IV richer: faster theta, better roll yield`
       : shape === "CONTANGO"
-        ? `⚠ Vol event priced into ${tsIVs[1][2].label} — avoid it or sell a WIDER strangle there; ${tsIVs[0][2].label} is cleaner`
+        ? `⚠ Vol event priced into ${tradeIVs[1][2].label} — avoid it or sell a WIDER strangle there; ${tradeIVs[0][2].label} is cleaner`
         : "Flat term structure — default ~45DTE expiry is fine";
-    tsHtml = `<b>VOL TERM STRUCTURE</b>&nbsp; ${tsIVs.map(([e, iv, m]) => `<span class="c">${m.label} (${m.dte}DTE)</span> ${(iv * 100).toFixed(1)}%`).join(" &nbsp; ")}
+    tsHtml = `<b>VOL TERM STRUCTURE</b>&nbsp; ${tsIVs.map(([e, iv, m, isRef]) =>
+        `<span class="${isRef ? "dim" : "c"}">${m.label} (${m.dte}DTE)${isRef ? " ref" : ""}</span> ${(iv * 100).toFixed(1)}%`).join(" &nbsp; ")}
       <div class="line">Slope: <span class="${cls}">${spread >= 0 ? "+" : ""}${spread.toFixed(1)} vol pts (${shape})</span> → <span class="${cls}">${rec}</span></div>`;
   }
   document.getElementById("term").innerHTML = tsHtml;
@@ -677,10 +702,25 @@ function render() {
   document.getElementById("alerts").innerHTML = al.length
     ? al.map((a) => `<div class="alert ${a.sev}"><b>[${a.ts}] ${a.title}</b><div class="dim">${a.msg}</div></div>`).join("")
     : `<div class="g">✓ All clear — no active alerts</div>`;
+
+  // Recent alerts — persists past the condition clearing (see logRecentAlert)
+  const recentEl = document.getElementById("recentAlerts");
+  if (recentEl) {
+    recentEl.innerHTML = state.recentAlerts.length
+      ? state.recentAlerts.slice(0, 10).map((a) => {
+          const when = new Date(a.ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+          const stillActive = !!state.alerts[a.key];
+          return `<div class="alert ${a.sev}" style="opacity:${stillActive ? 1 : .6}">
+            <b>[${when}] ${a.title}</b>${stillActive ? ` <span class="y" style="font-size:10px">● still active</span>` : ""}
+            <div class="dim">${a.msg}</div></div>`;
+        }).join("")
+      : `<div class="dim">No alerts fired yet this session.</div>`;
+  }
 }
 
-function card(meta, dte, body) {
-  return `<div class="card"><div class="cardhead">${meta.label} (${dte}DTE)</div>${body}</div>`;
+function card(meta, dte, body, isRef = false) {
+  const badge = isRef ? ` <span class="badge ref">reference</span>` : "";
+  return `<div class="card"><div class="cardhead">${meta.label} (${dte}DTE)${badge}</div>${body}</div>`;
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────

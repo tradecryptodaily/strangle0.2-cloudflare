@@ -1,7 +1,7 @@
 // GET /api/chain — Cloudflare Pages Function (routed from this file's path:
 // functions/api/chain.js → /api/chain). Full option chain + BTC spot for
 // the tracked 45/80-DTE expiries. Public Delta data, called unsigned.
-import { deltaGet, targetExpiries, expToDate } from "./_delta.js";
+import { deltaGet, targetExpiries, expToDate, nearestMonthlyExpiry } from "./_delta.js";
 
 function extract(t) {
   // IV / bid / ask tolerant to Delta schema variants (greeks.iv, mark_vol, quotes.*)
@@ -41,7 +41,16 @@ export async function onRequestGet(context) {
     const url = new URL(request.url);
     const extra = (url.searchParams.get("expiries") || "")
       .split(",").map((s) => s.trim()).filter(Boolean);
-    const expiries = targetExpiries(undefined, extra);
+    const tradeTargets = targetExpiries(undefined, extra);
+
+    // Nearest monthly, shown as a 3rd reference-only card for full
+    // term-structure context. If it already coincides with a trade target
+    // (or an active position's expiry), don't duplicate the card.
+    const refCandidate = nearestMonthlyExpiry();
+    const reference = tradeTargets.includes(refCandidate) ? null : refCandidate;
+    const expiries = reference
+      ? [...tradeTargets, reference].sort((a, b) => expToDate(a) - expToDate(b))
+      : tradeTargets;
 
     const data = await deltaGet("/v2/tickers", { contract_types: "call_options,put_options" }, false, env);
     const chain = {};
@@ -82,7 +91,8 @@ export async function onRequestGet(context) {
       };
     }
     return json(
-      { fetched_at: new Date().toISOString(), spot, expiries, meta, chain },
+      { fetched_at: new Date().toISOString(), spot, expiries, meta, chain,
+        reference, trade_targets: tradeTargets },
       200,
       { "cache-control": "s-maxage=10, stale-while-revalidate=30" }
     );

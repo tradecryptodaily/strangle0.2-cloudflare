@@ -101,6 +101,20 @@ function targetExpiries(dteTargets = DTE_TARGETS, extra = []) {
   return [...new Set(picks)].sort((a, b) => expToDate(a) - expToDate(b));
 }
 
+// The very next monthly expiry on/after today — calendar-only, no API
+// dependency. Shown as a non-tradeable reference card so the term-structure
+// view has a real front-of-curve point, independent of the 45/80 DTE targets.
+function nearestMonthlyExpiry(today = new Date()) {
+  const t0 = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  let y = today.getUTCFullYear(), m = today.getUTCMonth();
+  let lf = lastFriday(y, m);
+  if (lf.getTime() < t0) {
+    m += 1; if (m > 11) { m = 0; y += 1; }
+    lf = lastFriday(y, m);
+  }
+  return ddmmyy(lf);
+}
+
 function checkToken(request, env) {
   const want = env && env.DASH_TOKEN;
   if (!want) return true; // protection disabled
@@ -109,4 +123,4 @@ function checkToken(request, env) {
   return got === want;
 }
 
-export { deltaGet, targetExpiries, expToDate, checkToken };
+export { deltaGet, targetExpiries, expToDate, checkToken, nearestMonthlyExpiry };
