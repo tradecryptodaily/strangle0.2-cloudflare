@@ -242,16 +242,22 @@ function checkPositionTriggers(pid, exp, legs, S, meta) {
   const pctDn = beDn ? ((S - beDn) / S) * 100 : null;
   const pfx = `${pid}`;
 
+  // Every alert title is tagged with [pid + expiry label] so it's clear which
+  // position/expiry fired it at a glance — same fix as the terminal, since
+  // the strike alone (or a raw symbol like C-BTC-70000-280826) only
+  // disambiguates by coincidence when no two of your positions share a strike.
+  const tag = (title) => `[${meta}] ${title}`;
+
   if (pnlPct >= TRIGGERS.profit_target_pct)
-    fire(`${pfx}:profit`, "✅ 50% Profit Target", `${meta}: +${pnlPct.toFixed(0)}% of credit — close the trade`, "green");
+    fire(`${pfx}:profit`, tag("✅ 50% Profit Target"), `+${pnlPct.toFixed(0)}% of credit — close the trade`, "green");
   else clearAlert(`${pfx}:profit`);
 
   if (lossX >= TRIGGERS.stop_x_credit)
-    fire(`${pfx}:stop`, "🛑 HARD STOP", `${meta}: loss ${lossX.toFixed(1)}x credit — EXIT NOW`, "red");
+    fire(`${pfx}:stop`, tag("🛑 HARD STOP"), `loss ${lossX.toFixed(1)}x credit — EXIT NOW`, "red");
   else {
     clearAlert(`${pfx}:stop`);
     if (lossX >= TRIGGERS.loss_x_credit)
-      fire(`${pfx}:loss`, "⚠️ 1.5x Loss Warning", `${meta}: loss ${lossX.toFixed(1)}x credit — prepare to adjust`, "yellow");
+      fire(`${pfx}:loss`, tag("⚠️ 1.5x Loss Warning"), `loss ${lossX.toFixed(1)}x credit — prepare to adjust`, "yellow");
     else clearAlert(`${pfx}:loss`);
   }
 
@@ -260,17 +266,17 @@ function checkPositionTriggers(pid, exp, legs, S, meta) {
     const key = `${pfx}:${name}`;
     const delta = Math.abs(d.delta || 0);
     if (delta >= TRIGGERS.delta_breach)
-      fire(`${key}:delta`, `📈 ${name} delta ${delta.toFixed(2)}`, `${leg.symbol}: roll trigger hit (≥0.30)`, "red");
+      fire(`${key}:delta`, tag(`📈 ${name} delta ${delta.toFixed(2)}`), `${leg.symbol}: roll trigger hit (≥0.30)`, "red");
     else clearAlert(`${key}:delta`);
     if ((d.gamma || 0) >= TRIGGERS.gamma_breach)
-      fire(`${key}:gamma`, `⚡ ${name} gamma alert`, `${leg.symbol}: Γ=${(d.gamma).toFixed(6)} — roll earlier than delta trigger`, "yellow");
+      fire(`${key}:gamma`, tag(`⚡ ${name} gamma alert`), `${leg.symbol}: Γ=${(d.gamma).toFixed(6)} — roll earlier than delta trigger`, "yellow");
     else clearAlert(`${key}:gamma`);
     // vega shock vs first-seen IV baseline (localStorage)
     if (d.iv > 0) {
       if (!ivBase[leg.symbol]) { ivBase[leg.symbol] = d.iv; localStorage.setItem("iv_baseline", JSON.stringify(ivBase)); }
       const spike = (d.iv / ivBase[leg.symbol] - 1) * 100;
       if (spike >= TRIGGERS.iv_spike_pct)
-        fire(`${key}:vega`, `🌊 ${name} IV spike +${spike.toFixed(0)}%`, `${leg.symbol}: roll further OTM or hedge vega`, "yellow");
+        fire(`${key}:vega`, tag(`🌊 ${name} IV spike +${spike.toFixed(0)}%`), `${leg.symbol}: roll further OTM or hedge vega`, "yellow");
       else clearAlert(`${key}:vega`);
     }
     // OI wall crumbling (session peaks in localStorage, min-peak filter)
@@ -281,17 +287,17 @@ function checkPositionTriggers(pid, exp, legs, S, meta) {
       if (oiPeaks[pk] >= TRIGGERS.oi_wall_min_peak) {
         const drop = ((oiPeaks[pk] - oi) / oiPeaks[pk]) * 100;
         if (drop >= TRIGGERS.oi_wall_drop_pct)
-          fire(`${key}:oi`, `🧱 OI wall crumbling`, `${leg.symbol}: OI −${drop.toFixed(0)}% from peak — strike vulnerable`, "yellow");
+          fire(`${key}:oi`, tag("🧱 OI wall crumbling"), `${leg.symbol}: OI −${drop.toFixed(0)}% from peak — strike vulnerable`, "yellow");
         else clearAlert(`${key}:oi`);
       }
     }
   }
 
   if (pctUp != null && pctUp <= TRIGGERS.be_proximity_pct)
-    fire(`${pfx}:beup`, "⚠️ Near call breakeven", `${meta}: ${pctUp.toFixed(1)}% to upper BE $${fmt(beUp)}`, "yellow");
+    fire(`${pfx}:beup`, tag("⚠️ Near call breakeven"), `${pctUp.toFixed(1)}% to upper BE $${fmt(beUp)}`, "yellow");
   else clearAlert(`${pfx}:beup`);
   if (pctDn != null && pctDn <= TRIGGERS.be_proximity_pct)
-    fire(`${pfx}:bedn`, "⚠️ Near put breakeven", `${meta}: ${pctDn.toFixed(1)}% to lower BE $${fmt(beDn)}`, "yellow");
+    fire(`${pfx}:bedn`, tag("⚠️ Near put breakeven"), `${pctDn.toFixed(1)}% to lower BE $${fmt(beDn)}`, "yellow");
   else clearAlert(`${pfx}:bedn`);
 
   const mp = maxPain(ch);
@@ -300,7 +306,7 @@ function checkPositionTriggers(pid, exp, legs, S, meta) {
     const nearUp = beUp != null && mp >= beUp * (1 - prox);
     const nearDn = beDn != null && mp <= beDn * (1 + prox);
     if (nearUp || nearDn)
-      fire(`${pfx}:mp`, "🧲 Max pain near breakeven", `${meta}: max pain $${fmt(mp)} near BE — pinning risk, consider widening`, "yellow");
+      fire(`${pfx}:mp`, tag("🧲 Max pain near breakeven"), `max pain $${fmt(mp)} near BE — pinning risk, consider widening`, "yellow");
     else clearAlert(`${pfx}:mp`);
   }
 
