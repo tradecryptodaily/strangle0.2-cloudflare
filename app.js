@@ -378,9 +378,14 @@ function pollPositions() {
   render();
 }
 async function pollVol() {
-  // 30d RV from BTC daily closes
+  // 30d RV from BTC daily closes. NOTE: must be "BTCUSD" — Delta India's
+  // perpetual futures symbol, not "BTCUSDT" (that returns an empty result
+  // from Delta's /v2/history/candles with no error, which silently broke
+  // both RV30 and the IV-history backfill below: btcByDay ended up empty,
+  // so every Sd lookup failed and IV Rank stayed stuck on "collecting…"
+  // forever regardless of how long the site ran).
   try {
-    const d = await j("/api/candles?symbol=BTCUSDT&days=35");
+    const d = await j("/api/candles?symbol=BTCUSD&days=35");
     const closes = (d.result || []).sort((a, b) => a.time - b.time).map((c) => +c.close).filter((x) => x > 0).slice(-31);
     if (closes.length >= 15) {
       const rets = closes.slice(1).map((c, i) => Math.log(c / closes[i]));

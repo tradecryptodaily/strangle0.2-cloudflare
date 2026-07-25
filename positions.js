@@ -30,6 +30,18 @@ const MY_POSITIONS = [
     entry_date: "2026-07-07",
   },
   {
+    id: "AUG28_003",
+    active: true,
+    expiry: "280826",
+    call_strike: 74000,          // naked call
+    put_strike: null,
+    entry_call_price: 600.0,
+    entry_put_price: 0,
+    lots: 500,
+    entry_spot: 65000,           // estimate — correct if you have the exact fill spot
+    entry_date: "2026-07-21",
+  },
+  {
     id: "SEP25_001",
     active: true,
     expiry: "250926",
