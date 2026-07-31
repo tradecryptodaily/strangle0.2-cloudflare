@@ -101,14 +101,17 @@ function targetExpiries(dteTargets = DTE_TARGETS, extra = []) {
   return [...new Set(picks)].sort((a, b) => expToDate(a) - expToDate(b));
 }
 
-// The very next monthly expiry on/after today — calendar-only, no API
+// The very next monthly expiry STRICTLY AFTER today — calendar-only, no API
 // dependency. Shown as a non-tradeable reference card so the term-structure
 // view has a real front-of-curve point, independent of the 45/80 DTE targets.
+// Uses `<=` (not `<`) so that on the expiry day itself this already rolls to
+// next month, instead of handing back a 0DTE reference that sits empty once
+// Delta stops serving quotes for it later that day.
 function nearestMonthlyExpiry(today = new Date()) {
   const t0 = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
   let y = today.getUTCFullYear(), m = today.getUTCMonth();
   let lf = lastFriday(y, m);
-  if (lf.getTime() < t0) {
+  if (lf.getTime() <= t0) {
     m += 1; if (m > 11) { m = 0; y += 1; }
     lf = lastFriday(y, m);
   }

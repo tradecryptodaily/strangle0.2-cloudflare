@@ -622,14 +622,39 @@ function render() {
   let tsHtml = "";
   const tradeIVs = tsIVs.filter(([, , , isRef]) => !isRef);
   if (tradeIVs.length >= 2) {
-    const spread = (tradeIVs[1][1] - tradeIVs[0][1]) * 100;
+    const [frontE, frontIV, frontMeta] = tradeIVs[0];
+    const [nextE, nextIV, nextMeta] = tradeIVs[1];
+    const spread = (nextIV - frontIV) * 100;
     const shape = spread <= -TS_FLAT_PTS ? "BACKWARDATION" : spread >= TS_FLAT_PTS ? "CONTANGO" : "FLAT";
     const cls = shape === "BACKWARDATION" ? "g" : shape === "CONTANGO" ? "y" : "";
-    const rec = shape === "BACKWARDATION"
-      ? `Prefer ${tradeIVs[0][2].label} — front IV richer: faster theta, better roll yield`
-      : shape === "CONTANGO"
-        ? `⚠ Vol event priced into ${tradeIVs[1][2].label} — avoid it or sell a WIDER strangle there; ${tradeIVs[0][2].label} is cleaner`
-        : "Flat term structure — default ~45DTE expiry is fine";
+
+    // Forward-vol decomposition: a raw two-point IV comparison can't tell
+    // apart "next month is genuinely riskier" from "front month is just
+    // currently cheap". Isolate the vol priced for JUST the front->next
+    // window via variance additivity:
+    //   Var(next)*T(next) = Var(front)*T(front) + Var(fwd)*T(fwd)
+    const Tf = Math.max(1, frontMeta.dte) / 365, Tn = Math.max(1, nextMeta.dte) / 365;
+    const Tfwd = Tn - Tf;
+    let fwdIV = null;
+    if (Tfwd > 0) {
+      const varFwd = (nextIV ** 2 * Tn - frontIV ** 2 * Tf) / Tfwd;
+      if (varFwd > 0) fwdIV = Math.sqrt(varFwd);
+    }
+
+    let rec;
+    if (shape === "BACKWARDATION") {
+      rec = `Prefer ${frontMeta.label} — front IV richer: faster theta, better roll yield`;
+    } else if (shape === "CONTANGO") {
+      if (fwdIV != null && fwdIV > frontIV + TS_FLAT_PTS / 100) {
+        rec = `⚠ Forward vol ${(fwdIV * 100).toFixed(1)}% (${frontMeta.label}→${nextMeta.label} window) well above front IV ${(frontIV * 100).toFixed(1)}% — real incremental risk priced in, not just ${frontMeta.label} being cheap. Avoid ${nextMeta.label} or sell WIDER there; ${frontMeta.label} is cleaner`;
+      } else if (fwdIV != null) {
+        rec = `Forward vol ${(fwdIV * 100).toFixed(1)}% is close to front IV ${(frontIV * 100).toFixed(1)}% — looks like normal term-structure carry, not a specific event. Contango alone isn't strong evidence to avoid ${nextMeta.label}`;
+      } else {
+        rec = `⚠ Vol event priced into ${nextMeta.label} — avoid it or sell a WIDER strangle there; ${frontMeta.label} is cleaner`;
+      }
+    } else {
+      rec = "Flat term structure — default ~45DTE expiry is fine";
+    }
     tsHtml = `<b>VOL TERM STRUCTURE</b>&nbsp; ${tsIVs.map(([e, iv, m, isRef]) =>
         `<span class="${isRef ? "dim" : "c"}">${m.label} (${m.dte}DTE)${isRef ? " ref" : ""}</span> ${(iv * 100).toFixed(1)}%`).join(" &nbsp; ")}
       <div class="line">Slope: <span class="${cls}">${spread >= 0 ? "+" : ""}${spread.toFixed(1)} vol pts (${shape})</span> → <span class="${cls}">${rec}</span></div>`;
