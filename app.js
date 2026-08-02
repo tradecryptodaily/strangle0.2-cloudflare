@@ -354,21 +354,24 @@ function pollPositions() {
   const legs = [];
   for (const p of src) {
     if (!p.active) continue;
-    const feePerLeg = (p.entry_spot || 0) * p.lots * 0.001 * 0.0005; // Delta: 0.05% notional
-    for (const [side, strike, entry] of [
-      ["call", p.call_strike, p.entry_call_price],
-      ["put", p.put_strike, p.entry_put_price],
+    // Per-leg lot override — for a "clubbed" position where the call and put
+    // were built up to different sizes over time. Falls back to p.lots for
+    // ordinary symmetric positions so nothing else has to change.
+    for (const [side, strike, entry, sideLots] of [
+      ["call", p.call_strike, p.entry_call_price, p.call_lots ?? p.lots],
+      ["put", p.put_strike, p.entry_put_price, p.put_lots ?? p.lots],
     ]) {
       if (!strike) continue;
       const d = (side === "call"
         ? state.chain?.[p.expiry]?.calls
         : state.chain?.[p.expiry]?.puts)?.[strike] || {};
       const mark = d.mark || 0;
+      const feePerLeg = (p.entry_spot || 0) * sideLots * 0.001 * 0.0005; // Delta: 0.05% notional
       legs.push({
         symbol: `${side === "call" ? "C" : "P"}-BTC-${strike}-${p.expiry}`,
         side, strike, expiry: p.expiry, posid: p.id, entry_date: p.entry_date,
-        size: -p.lots, entry_price: entry, mark_price: mark,
-        upnl: mark > 0 ? (entry - mark) * p.lots * 0.001 - feePerLeg : 0,
+        size: -sideLots, entry_price: entry, mark_price: mark,
+        upnl: mark > 0 ? (entry - mark) * sideLots * 0.001 - feePerLeg : 0,
       });
     }
   }
@@ -672,7 +675,14 @@ function render() {
     const isStrangle = !!(info.call && info.put);
     const [badgeTxt, badgeCls] = isStrangle ? ["Short Strangle", "strangle"]
       : info.put ? ["Naked Put", "naked"] : ["Naked Call", "naked"];
-    const lots = Math.abs(legs[0].size);
+    // Per-leg lot sizes can differ on a clubbed position (call/put built up
+    // separately over time) — show "1200C / 1000P lots" instead of one
+    // number that would only reflect whichever leg happens to be first.
+    const callLeg = legs.find((l) => l.side === "call");
+    const putLeg  = legs.find((l) => l.side === "put");
+    const lotsTxt = (!callLeg || !putLeg || Math.abs(callLeg.size) === Math.abs(putLeg.size))
+      ? `${fmt(Math.abs(legs[0].size))} lots`
+      : `${fmt(Math.abs(callLeg.size))}C / ${fmt(Math.abs(putLeg.size))}P lots`;
     const held = legs[0].entry_date
       ? ` · ${Math.max(0, Math.round((Date.now() - new Date(legs[0].entry_date)) / 86400000))}d held` : "";
     const legDesc = legs.map((l) => (l.side === "call" ? "C-" : "P-") + fmt(l.strike)).join(" + ");
@@ -713,7 +723,7 @@ function render() {
       <div class="pos-head"><span class="pos-id">${pid}</span>
         <span class="badge ${badgeCls}">${badgeTxt}</span>
         <span class="pill">${meta.dte} DTE</span></div>
-      <div class="pos-sub">${legDesc} · ${fmt(lots)} lots${held}</div>
+      <div class="pos-sub">${legDesc} · ${lotsTxt}${held}</div>
       <div class="sect" style="margin-top:6px">Unrealized P&amp;L</div>
       <div class="pnl-row">
         <div class="pnl-hero ${info.upnl >= 0 ? "g" : "r"}">${info.upnl >= 0 ? "+" : ""}$${fmt(info.upnl, 2)}</div>
