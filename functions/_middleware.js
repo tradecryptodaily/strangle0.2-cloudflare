@@ -3,11 +3,11 @@
 // project — static pages, assets, and /api/* functions alike — so this is
 // the one place that can block the whole site behind a single password.
 //
-// Setup (one-time, in the Cloudflare dashboard — this file can't do it):
-//   Pages project → Settings → Environment variables → add a secret named
-//   SITE_PASSWORD (Production AND Preview) → redeploy.
-// If SITE_PASSWORD is unset, the gate is a no-op (site behaves as before) —
-// so it's safe to ship this file before you've set the secret.
+// The password itself lives in ./_auth-config.js — that's the only file you
+// ever need to edit. No Cloudflare Access, no dashboard environment
+// variables, no third-party login service.
+
+import { SITE_PASSWORD } from "./_auth-config.js";
 
 const COOKIE_NAME = "site_auth";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
@@ -55,11 +55,11 @@ function loginPage(showError) {
 }
 
 export async function onRequest(context) {
-  const { request, env, next } = context;
+  const { request, next } = context;
   const url = new URL(request.url);
-  const want = env.SITE_PASSWORD;
+  const want = SITE_PASSWORD;
 
-  // No password configured yet — don't lock anyone out by accident.
+  // Empty string in _auth-config.js = gate turned off on purpose.
   if (!want) return next();
 
   const expected = await sha256Hex(want);
