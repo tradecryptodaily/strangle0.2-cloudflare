@@ -8,4 +8,4 @@
 //
 // Set it to an empty string ("") to turn the password gate off entirely.
 
-export const SITE_PASSWORD = "changeme123";
+export const SITE_PASSWORD = "leela";
